@@ -19,10 +19,8 @@ const Item = z.object({
     .enum(["good", "damaged", "quarantined", "expired"])
     .default("good"),
   sourceName: z.string().max(160).nullable().optional(),
-  barcode: z.string().max(100).nullable().optional(),
   notes: z.string().max(1000).nullable().optional(),
-  intakeMethod: z.enum(["manual", "csv", "vision"]).default("manual"),
-  visionConfidence: z.number().min(0).max(1).nullable().optional(),
+  intakeMethod: z.enum(["manual", "csv"]).default("manual"),
 });
 export async function GET() {
   const session = await getSession();
@@ -77,10 +75,10 @@ export async function POST(request: Request) {
             x.binLocation ?? null,
             x.condition,
             x.sourceName ?? null,
-            x.barcode ?? null,
+            null,
             x.notes ?? null,
             x.intakeMethod,
-            x.visionConfidence ?? null,
+            null,
             session.userId,
           ],
         )
@@ -101,7 +99,6 @@ export async function POST(request: Request) {
             `item-intake:${created.id}:${randomUUID()}`,
             {
               humanApproved: true,
-              visionConfidence: x.visionConfidence ?? null,
             },
           ],
         );

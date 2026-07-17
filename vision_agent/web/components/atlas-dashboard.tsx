@@ -1,7 +1,7 @@
 "use client";
 import dynamic from "next/dynamic";
 import { FormEvent, useEffect, useState } from "react";
-import { VisionIntake } from "./vision-intake";
+import { ManualIntake } from "./manual-intake";
 import { WarehouseSearch } from "./warehouse-search";
 import { AtlasOperations } from "./atlas-operations";
 import { ShortageWorkflow } from "./shortage-workflow";
@@ -23,6 +23,13 @@ type Bank = {
   longitude: string;
   agent_name: string | null;
   inventory_units: string;
+  inventory_summary: Array<{
+    category: string;
+    quantity: number;
+    committed: number;
+    safetyStock: number;
+    available: number;
+  }>;
 };
 type Item = {
   id: string;
@@ -38,7 +45,6 @@ type Item = {
   bin_location: string | null;
   condition: string;
   source_name: string | null;
-  barcode: string | null;
   notes: string | null;
   intake_method: string;
   row_version: number;
@@ -57,20 +63,9 @@ const columns: [keyof Item, string][] = [
   ["bin_location", "Bin"],
   ["condition", "Condition"],
   ["source_name", "Source"],
-  ["barcode", "Barcode"],
   ["notes", "Notes"],
 ];
 const json = apiJson;
-const DEMO_USER = { displayName: "Demo operator", email: "demo@synthetic.local" };
-const DEMO_CONTEXT: Context = { organizationName: "ReliefLink synthetic network", siteName: "Oakland Food Bank", agentName: "Oakland inventory agent" };
-const DEMO_BANKS: Bank[] = [
-  { id: "demo-oakland", name: "Oakland Food Bank", address: "8151 Village Drive", county: "Alameda", state: "CA", latitude: "37.80", longitude: "-122.27", agent_name: "Oakland inventory agent", inventory_units: "225" },
-  { id: "demo-fremont", name: "Fremont Food Bank", address: "2893 Mowry Avenue", county: "Alameda", state: "CA", latitude: "37.55", longitude: "-121.98", agent_name: "Fremont inventory agent", inventory_units: "75" },
-];
-const DEMO_ITEMS: Item[] = [
-  { id: "demo-corn", product_name: "Canned corn", brand: "Community pantry", category: "canned_goods", subcategory: "vegetables", quantity: "100", unit: "cans", lot_number: null, expiration_date: "2027-04-15", warehouse_zone: "A", bin_location: "12", condition: "good", source_name: "Synthetic demo", barcode: null, notes: "Demo inventory", intake_method: "vision", row_version: 1 },
-  { id: "demo-rice", product_name: "Rice boxes", brand: "Community pantry", category: "dry_goods", subcategory: null, quantity: "125", unit: "boxes", lot_number: null, expiration_date: null, warehouse_zone: "B", bin_location: "04", condition: "good", source_name: "Synthetic demo", barcode: null, notes: "Demo inventory", intake_method: "csv", row_version: 1 },
-];
 export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
   const [user, setUser] = useState<User | null>(initialUser),
     [view, setView] = useState<View>("overview"),
@@ -94,14 +89,7 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
         proposedAction: string;
       }>;
     } | null>(null);
-  const isDemo = user?.email === DEMO_USER.email;
   async function load() {
-    if (isDemo) {
-      setContext(DEMO_CONTEXT);
-      setBanks(DEMO_BANKS);
-      setItems(DEMO_ITEMS);
-      return;
-    }
     const [b, i] = await Promise.all([
       json("/api/food-banks"),
       json("/api/inventory/items"),
@@ -122,10 +110,6 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
         new Date(i.expiration_date).getTime() < Date.now() + 604800000,
     ).length;
   async function importCsv(file: File) {
-    if (isDemo) {
-      setNotice("Synthetic demo is read-only. Sign in to import inventory.");
-      return;
-    }
     setBusy(true);
     try {
       const form = new FormData();
@@ -145,10 +129,6 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
   }
   async function edit(item: Item, field: keyof Item, value: string) {
     if (String(item[field] ?? "") === value) return;
-    if (isDemo) {
-      setNotice("Synthetic demo is read-only. Sign in to edit inventory.");
-      return;
-    }
     try {
       const x = await json(`/api/inventory/items/${item.id}`, {
         method: "PATCH",
@@ -175,10 +155,6 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
     }
   }
   async function runAgent() {
-    if (isDemo) {
-      setAgent({ summary: { items: 2, totalUnits: 225, expiring: 1, missingLocations: 0 }, recommendations: [] });
-      return;
-    }
     setBusy(true);
     try {
       setAgent(await json("/api/agent/monitor"));
@@ -273,7 +249,6 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
             <i /> Shared ledger online
           </span>
         </header>
-        {isDemo && <div className="notice demo-notice">Synthetic demo · read-only data · sign in for real food-bank access</div>}
         {notice && (
           <div className="notice" onClick={() => setNotice("")}>
             {notice}
@@ -374,10 +349,42 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
               title={`${banks.length} registered food banks`}
             />
             <p className="muted">
-              Map listings are shared; item-level inventories remain
+              Category totals, protected stock, and committed quantities are
+              shared across registered food banks. Exact lots remain
               site-scoped.
             </p>
             <FoodBankMap foodBanks={banks} />
+            <div className="network-inventory-grid">
+              {banks.map((bank) => (
+                <article key={bank.id}>
+                  <header>
+                    <div>
+                      <strong>{bank.name}</strong>
+                      <span>{bank.county} County</span>
+                    </div>
+                    <b>{Number(bank.inventory_units).toLocaleString()} units</b>
+                  </header>
+                  {(bank.inventory_summary || []).map((row) => (
+                    <div className="network-inventory-row" key={row.category}>
+                      <strong>{row.category.replaceAll("_", " ")}</strong>
+                      <span>
+                        {Number(row.quantity).toLocaleString()} on hand
+                      </span>
+                      <span>
+                        {Number(row.committed).toLocaleString()} committed
+                      </span>
+                      <b>
+                        {Number(row.available).toLocaleString()} verified
+                        available
+                      </b>
+                    </div>
+                  ))}
+                  {!bank.inventory_summary?.length && (
+                    <p className="muted">No inventory reported.</p>
+                  )}
+                </article>
+              ))}
+            </div>
           </section>
         )}
         {view === "adjustment" && (
@@ -387,15 +394,14 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
                 <p className="eyebrow">Unified intake</p>
                 <h2>Inventory intake</h2>
                 <p>
-                  Photograph, describe, scan, enter, or import donations. Every
-                  method creates an editable draft or ledger record.
+                  Describe, enter, or import inventory. Every change is written
+                  to the shared ledger and remains editable.
                 </p>
               </div>
             </div>
-            <VisionIntake
-              readOnly={isDemo}
+            <ManualIntake
               onAdded={async () => {
-                setNotice("Vision-reviewed item added to the shared ledger.");
+                setNotice("Inventory item added to the shared ledger.");
                 await load();
               }}
             />
@@ -413,7 +419,7 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
                   href={
                     "data:text/csv;charset=utf-8," +
                     encodeURIComponent(
-                      "product_name,brand,category,subcategory,quantity,unit,lot_number,expiration_date,warehouse_zone,bin_location,condition,source_name,barcode,notes\nCanned corn,Green Farm,Vegetables,Canned,24,cans,LOT-101,2027-04-15,A,12,good,Community donation,012345678901,",
+                      "product_name,brand,category,subcategory,quantity,unit,lot_number,expiration_date,warehouse_zone,bin_location,condition,source_name,notes\nCanned corn,Green Farm,Vegetables,Canned,24,cans,LOT-101,2027-04-15,A,12,good,Community donation,",
                     )
                   }
                   download="relieflink-inventory-template.csv"
@@ -502,7 +508,7 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
                   ) : (
                     <tr>
                       <td colSpan={columns.length + 1} className="empty">
-                        No inventory yet. Use photo analysis or import a CSV.
+                        No inventory yet. Add an item or import a CSV.
                       </td>
                     </tr>
                   )}
@@ -520,8 +526,8 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
                   <p className="eyebrow">Site agent</p>
                   <h2>{context?.agentName}</h2>
                   <p>
-                    Reviews this food bank&apos;s combined manual, CSV, and
-                    vision-assisted inventory.
+                    Reviews this food bank&apos;s manual and CSV inventory
+                    against nearby registered food banks.
                   </p>
                 </div>
               </div>
@@ -668,12 +674,12 @@ function Auth({ done }: { done: (u: User) => void }) {
           <p className="eyebrow">One network. Local control.</p>
           <h1>Inventory intelligence with a human in charge.</h1>
           <p>
-            Register a food bank, use camera-assisted intake, manage a shared
-            ledger, and let your site agent surface what needs attention.
+            Register a food bank, manage a shared ledger, and let your site
+            agent coordinate shortages with nearby branches.
           </p>
         </div>
         <div className="auth-points">
-          <span>✓ Vision-assisted intake</span>
+          <span>✓ Inter-food-bank visibility</span>
           <span>✓ Shared Postgres ledger</span>
           <span>✓ Human-governed agents</span>
         </div>
@@ -763,12 +769,6 @@ function Auth({ done }: { done: (u: User) => void }) {
                 : "Register food bank"}
           </button>
         </form>
-        <div className="demo-entry">
-          <p className="muted">Just exploring? Open a read-only synthetic scenario without creating an account.</p>
-          <button className="button secondary full" type="button" onClick={() => done(DEMO_USER)}>
-            Enter synthetic demo
-          </button>
-        </div>
       </section>
     </main>
   );

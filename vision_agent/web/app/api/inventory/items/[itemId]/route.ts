@@ -21,7 +21,6 @@ const Update = z.object({
     "bin_location",
     "condition",
     "source_name",
-    "barcode",
     "notes",
   ]),
   value: z.union([z.string(), z.number(), z.null()]),
