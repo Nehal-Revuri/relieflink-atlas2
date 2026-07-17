@@ -24,19 +24,31 @@ import requests
 
 from shared.config import CATEGORIES, CLAUDE_MODEL, LEDGER_URL
 
-COUNTING_PROMPT = f"""You are an inventory counter for a food bank.
-Look at this photo of shelves/pallets and count the visible items in each category:
+COUNTING_PROMPT = f"""You are an inventory counter for a food bank. This is the
+reasoning stage, so do not jump straight to a single holistic guess.
+
+Scan the image systematically from left to right and front to back, region by
+region. For each cluster, describe what is visible and keep a running tally by
+category. Count partially occluded items when a visible rim, lid, edge, or side
+identifies a separate item; do not count only fully visible tops. Do not count
+the same item twice when regions overlap. If an item is uncertain, call it out
+as uncertain in your notes instead of silently guessing it into the tally.
+
+At the end, report the running tally and explain which items were fully visible
+versus estimated from partial views. The next stage will extract the final
+schema from this account.
+
+Categories to use:
 
 - canned_goods: cans and jars of food
 - produce: fresh fruit and vegetables (count crates/boxes as 20 items each)
 - dairy: milk cartons, cheese, yogurt, eggs
 - dry_goods: bags/boxes of rice, pasta, cereal, flour, beans
 
-Count only what you can actually see. If a category is not visible, count it as 0.
-Set confidence between 0 and 1 based on how clearly you could see and count the items.
-Note anything unusual (blocked view, blur, partial shelf) in notes.
+If a category is not visible, count it as 0. Note anything unusual (blocked
+view, blur, or a partial shelf) in the reasoning text.
 
-Categories, exactly these keys: {", ".join(CATEGORIES)}"""
+The final JSON must use exactly these category keys: {", ".join(CATEGORIES)}"""
 
 # Claude is forced to reply with JSON matching this schema, so no parsing surprises.
 COUNT_SCHEMA = {
@@ -63,22 +75,27 @@ MEDIA_TYPES = {
 }
 
 
-def count_with_claude(image_path: str) -> dict:
-    """Send one shelf photo to Claude and get category counts back."""
-    import anthropic  # imported here so --fake works without the package configured
+EXTRACTION_PROMPT = f"""Extract the final inventory count from the visual counting
+record below. Return only the requested JSON schema. Use the running tally from
+the record, not a new holistic estimate. Preserve uncertainty in notes. The
+counts must be non-negative integers and use exactly these keys: {", ".join(CATEGORIES)}.
+The confidence field is only a placeholder; the caller will replace it with a
+deterministic agreement score from two independent passes.
 
-    path = Path(image_path)
-    media_type = MEDIA_TYPES.get(path.suffix.lower())
-    if media_type is None:
-        sys.exit(f"Unsupported image type {path.suffix}, use jpg/png/webp")
+VISUAL COUNTING RECORD:
+{{reasoning}}"""
 
-    image_data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
 
-    client = anthropic.Anthropic()
-    response = client.messages.create(
+def _text_from_response(response) -> str:
+    """Return the first text block from an Anthropic response."""
+    return next(block.text for block in response.content if block.type == "text")
+
+
+def _count_pass(client, image_data: str, media_type: str, prompt: str) -> tuple[dict, str]:
+    """Run the free-text visual pass followed by schema-constrained extraction."""
+    reasoning_response = client.messages.create(
         model=CLAUDE_MODEL,
-        max_tokens=1024,
-        output_config={"format": {"type": "json_schema", "schema": COUNT_SCHEMA}},
+        max_tokens=2048,
         messages=[
             {
                 "role": "user",
@@ -91,13 +108,69 @@ def count_with_claude(image_path: str) -> dict:
                             "data": image_data,
                         },
                     },
-                    {"type": "text", "text": COUNTING_PROMPT},
+                    {"type": "text", "text": prompt},
                 ],
             }
         ],
     )
-    text = next(block.text for block in response.content if block.type == "text")
-    return json.loads(text)
+    reasoning = _text_from_response(reasoning_response)
+    extraction_response = client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=1024,
+        output_config={"format": {"type": "json_schema", "schema": COUNT_SCHEMA}},
+        messages=[
+            {
+                "role": "user",
+                "content": EXTRACTION_PROMPT.format(reasoning=reasoning),
+            }
+        ],
+    )
+    return json.loads(_text_from_response(extraction_response)), reasoning
+
+
+def _agreement_confidence(first: dict, second: dict) -> tuple[float, str | None]:
+    """Turn agreement between two passes into an auditable confidence signal."""
+    disagreements = []
+    scores = []
+    for category in CATEGORIES:
+        first_count = int(first["counts"].get(category, 0))
+        second_count = int(second["counts"].get(category, 0))
+        delta = abs(first_count - second_count)
+        scores.append(max(0.0, 1.0 - delta / max(first_count, second_count, 1)))
+        if delta:
+            disagreements.append(f"{category}: passes differed by {delta} ({first_count} vs {second_count})")
+    note = "Independent pass disagreement: " + "; ".join(disagreements) if disagreements else None
+    return round(sum(scores) / len(scores), 2), note
+
+
+def count_with_claude(image_path: str, debug: bool = False) -> dict:
+    """Count one shelf photo using two visual passes and grounded agreement confidence."""
+    import anthropic  # imported here so --fake works without the package configured
+
+    path = Path(image_path)
+    media_type = MEDIA_TYPES.get(path.suffix.lower())
+    if media_type is None:
+        sys.exit(f"Unsupported image type {path.suffix}, use jpg/png/webp")
+
+    image_data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
+
+    client = anthropic.Anthropic()
+    first, first_reasoning = _count_pass(client, image_data, media_type, COUNTING_PROMPT)
+    second_prompt = COUNTING_PROMPT + "\nPerform this as an independent recount; do not copy a prior answer."
+    second, second_reasoning = _count_pass(client, image_data, media_type, second_prompt)
+    confidence, disagreement = _agreement_confidence(first, second)
+    counts = {
+        category: round((int(first["counts"].get(category, 0)) + int(second["counts"].get(category, 0))) / 2)
+        for category in CATEGORIES
+    }
+    notes = " ".join(note for note in (first.get("notes"), second.get("notes"), disagreement) if note)
+    if debug:
+        print("--- Claude counting pass A ---")
+        print(first_reasoning)
+        print("--- Claude counting pass B ---")
+        print(second_reasoning)
+        print(f"--- grounded agreement confidence: {confidence:.2f} ---")
+    return {"counts": counts, "confidence": confidence, "notes": notes}
 
 
 def fake_result() -> dict:
@@ -153,10 +226,10 @@ def run_once(args: argparse.Namespace) -> None:
     if args.fake:
         post_counts(args.site_id, fake_result(), source="fake")
     elif args.image:
-        post_counts(args.site_id, count_with_claude(args.image), source="vision")
+        post_counts(args.site_id, count_with_claude(args.image, debug=args.debug), source="vision")
     elif args.camera is not None:
         frame_path = capture_frame(args.camera)
-        post_counts(args.site_id, count_with_claude(frame_path), source="vision")
+        post_counts(args.site_id, count_with_claude(frame_path, debug=args.debug), source="vision")
     else:
         sys.exit("Pick a mode: --fake, --image PATH, or --camera INDEX")
 
@@ -167,6 +240,7 @@ def main() -> None:
     parser.add_argument("--image", help="count a single photo instead of using a camera")
     parser.add_argument("--camera", type=int, help="webcam index to capture from (usually 0)")
     parser.add_argument("--fake", action="store_true", help="post random counts, no Claude needed")
+    parser.add_argument("--debug", action="store_true", help="print both Claude visual counting records")
     parser.add_argument("--loop", type=int, help="repeat every N seconds (motion trigger: TODO)")
     args = parser.parse_args()
 

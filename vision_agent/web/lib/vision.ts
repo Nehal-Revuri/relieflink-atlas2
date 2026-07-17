@@ -215,7 +215,7 @@ export async function analyzeStillImage(input: {
     classification,
     disagreement,
     countMethod: "tiled_package_detection",
-    countNote: "Visible package count from overlapping camera tiles. Closed cartons and hidden items require a label, packing slip, or human confirmation.",
+    countNote: "Hosted web count from overlapping Roboflow package-detection tiles; this is separate from the Python agent's two-pass Claude counter. Closed cartons and hidden items require a label, packing slip, or human confirmation.",
     mode:"cloud",
   };
 }
