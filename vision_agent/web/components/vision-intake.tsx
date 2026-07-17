@@ -36,7 +36,7 @@ type Detector = {
 };
 type DetectorConstructor = new (options?: { formats?: string[] }) => Detector;
 
-export function VisionIntake({ onAdded }: { onAdded: () => void }) {
+export function VisionIntake({ onAdded, readOnly = false }: { onAdded: () => void; readOnly?: boolean }) {
   const [mode, setMode] = useState<"photo" | "describe" | "barcode">("photo");
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<VisionResult | null>(null);
@@ -184,6 +184,10 @@ export function VisionIntake({ onAdded }: { onAdded: () => void }) {
   }
 
   async function approve() {
+    if (readOnly) {
+      setError("Synthetic demo is read-only. Sign in to add inventory.");
+      return;
+    }
     if (!draft.productName || !draft.category || !draft.unit) {
       setError("Food item, category, and unit are required before approval.");
       return;

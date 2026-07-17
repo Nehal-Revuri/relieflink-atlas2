@@ -61,6 +61,16 @@ const columns: [keyof Item, string][] = [
   ["notes", "Notes"],
 ];
 const json = apiJson;
+const DEMO_USER = { displayName: "Demo operator", email: "demo@synthetic.local" };
+const DEMO_CONTEXT: Context = { organizationName: "ReliefLink synthetic network", siteName: "Oakland Food Bank", agentName: "Oakland inventory agent" };
+const DEMO_BANKS: Bank[] = [
+  { id: "demo-oakland", name: "Oakland Food Bank", address: "8151 Village Drive", county: "Alameda", state: "CA", latitude: "37.80", longitude: "-122.27", agent_name: "Oakland inventory agent", inventory_units: "225" },
+  { id: "demo-fremont", name: "Fremont Food Bank", address: "2893 Mowry Avenue", county: "Alameda", state: "CA", latitude: "37.55", longitude: "-121.98", agent_name: "Fremont inventory agent", inventory_units: "75" },
+];
+const DEMO_ITEMS: Item[] = [
+  { id: "demo-corn", product_name: "Canned corn", brand: "Community pantry", category: "canned_goods", subcategory: "vegetables", quantity: "100", unit: "cans", lot_number: null, expiration_date: "2027-04-15", warehouse_zone: "A", bin_location: "12", condition: "good", source_name: "Synthetic demo", barcode: null, notes: "Demo inventory", intake_method: "vision", row_version: 1 },
+  { id: "demo-rice", product_name: "Rice boxes", brand: "Community pantry", category: "dry_goods", subcategory: null, quantity: "125", unit: "boxes", lot_number: null, expiration_date: null, warehouse_zone: "B", bin_location: "04", condition: "good", source_name: "Synthetic demo", barcode: null, notes: "Demo inventory", intake_method: "csv", row_version: 1 },
+];
 export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
   const [user, setUser] = useState<User | null>(initialUser),
     [view, setView] = useState<View>("overview"),
@@ -84,7 +94,14 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
         proposedAction: string;
       }>;
     } | null>(null);
+  const isDemo = user?.email === DEMO_USER.email;
   async function load() {
+    if (isDemo) {
+      setContext(DEMO_CONTEXT);
+      setBanks(DEMO_BANKS);
+      setItems(DEMO_ITEMS);
+      return;
+    }
     const [b, i] = await Promise.all([
       json("/api/food-banks"),
       json("/api/inventory/items"),
@@ -105,6 +122,10 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
         new Date(i.expiration_date).getTime() < Date.now() + 604800000,
     ).length;
   async function importCsv(file: File) {
+    if (isDemo) {
+      setNotice("Synthetic demo is read-only. Sign in to import inventory.");
+      return;
+    }
     setBusy(true);
     try {
       const form = new FormData();
@@ -124,6 +145,10 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
   }
   async function edit(item: Item, field: keyof Item, value: string) {
     if (String(item[field] ?? "") === value) return;
+    if (isDemo) {
+      setNotice("Synthetic demo is read-only. Sign in to edit inventory.");
+      return;
+    }
     try {
       const x = await json(`/api/inventory/items/${item.id}`, {
         method: "PATCH",
@@ -150,6 +175,10 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
     }
   }
   async function runAgent() {
+    if (isDemo) {
+      setAgent({ summary: { items: 2, totalUnits: 225, expiring: 1, missingLocations: 0 }, recommendations: [] });
+      return;
+    }
     setBusy(true);
     try {
       setAgent(await json("/api/agent/monitor"));
@@ -244,6 +273,7 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
             <i /> Shared ledger online
           </span>
         </header>
+        {isDemo && <div className="notice demo-notice">Synthetic demo · read-only data · sign in for real food-bank access</div>}
         {notice && (
           <div className="notice" onClick={() => setNotice("")}>
             {notice}
@@ -363,6 +393,7 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
               </div>
             </div>
             <VisionIntake
+              readOnly={isDemo}
               onAdded={async () => {
                 setNotice("Vision-reviewed item added to the shared ledger.");
                 await load();
@@ -732,6 +763,12 @@ function Auth({ done }: { done: (u: User) => void }) {
                 : "Register food bank"}
           </button>
         </form>
+        <div className="demo-entry">
+          <p className="muted">Just exploring? Open a read-only synthetic scenario without creating an account.</p>
+          <button className="button secondary full" type="button" onClick={() => done(DEMO_USER)}>
+            Enter synthetic demo
+          </button>
+        </div>
       </section>
     </main>
   );
