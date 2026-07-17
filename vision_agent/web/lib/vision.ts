@@ -153,6 +153,22 @@ function suppressDuplicateDetections(detections: Detection[]) {
   return kept;
 }
 
+/** Remove boxes clipped by tile boundaries or covering most of a tile. */
+function filterTileArtifacts(detections: Detection[], tileWidth: number, tileHeight: number) {
+  const edgeMargin = Math.max(0.01, Math.min(0.15, Number(setting("YOLO_TILE_EDGE_MARGIN") ?? "0.04")));
+  const maxArea = Math.max(0.2, Math.min(1, Number(setting("YOLO_TILE_MAX_BOX_AREA") ?? "0.55")));
+  return detections.filter((detection) => {
+    const left = detection.x - detection.width / 2;
+    const right = detection.x + detection.width / 2;
+    const top = detection.y - detection.height / 2;
+    const bottom = detection.y + detection.height / 2;
+    const clipped = left <= tileWidth * edgeMargin || top <= tileHeight * edgeMargin
+      || right >= tileWidth * (1 - edgeMargin) || bottom >= tileHeight * (1 - edgeMargin);
+    const oversized = detection.width * detection.height >= tileWidth * tileHeight * maxArea;
+    return !clipped && !oversized;
+  });
+}
+
 async function runRoboflow(bytes: Buffer): Promise<{ predictions: Detection[]; width: number; height: number }> {
   const apiKey = setting("ROBOFLOW_API_KEY");
   const model = setting("YOLO_MODEL_ID");
@@ -181,7 +197,8 @@ async function runRoboflow(bytes: Buffer): Promise<{ predictions: Detection[]; w
     const result = await runRoboflowRequest(tileBytes.toString("base64"), apiKey, model);
     const resultWidth = result.image?.width ?? tileWidth;
     const resultHeight = result.image?.height ?? tileHeight;
-    return filterPredictions(result).map((detection) => ({
+    const tileDetections = filterTileArtifacts(filterPredictions(result), tileWidth, tileHeight);
+    return tileDetections.map((detection) => ({
       ...detection,
       x: left + detection.x * tileWidth / resultWidth,
       y: top + detection.y * tileHeight / resultHeight,
