@@ -54,9 +54,6 @@ const aliases: Record<string, string> = {
   location: "bin_location",
   shelf: "bin_location",
   bin: "bin_location",
-  upc: "barcode",
-  upc_code: "barcode",
-  sku: "barcode",
 };
 const mappedKey = (value: string) => aliases[key(value)] || key(value);
 type Row = Record<string, string | number> & {
@@ -158,7 +155,7 @@ export async function POST(request: Request) {
               row.bin_location || null,
               row.condition || "good",
               row.source_name || null,
-              row.barcode || null,
+              null,
               row.notes || null,
               session.userId,
             ],

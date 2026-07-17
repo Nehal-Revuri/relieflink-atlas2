@@ -6,12 +6,11 @@ truth across authorized devices and food-bank accounts.
 ## Capabilities
 
 - Food-bank administrator registration creates a site, account, map listing, and agent.
-- Inventory Adjustment combines phone-camera/photo analysis and CSV import in one tab.
-- Tiled YOLO/Roboflow inference counts visible packages; the multimodal model identifies
-  food properties. An operator edits and approves the result before it enters inventory.
+- Inventory Adjustment combines editable manual/plain-language entry and tolerant CSV import.
 - All inventory appears in one editable spreadsheet with optimistic concurrency and an
-  audit trail, including `vision` and `csv` intake provenance.
-- Registered food banks appear on the network map while item-level ledgers stay scoped.
+  audit trail for manual and CSV intake.
+- Registered food banks share category totals, committed quantities, safety stock, and
+  verified availability on the network map while exact lots stay scoped.
 - Each food-bank agent monitors expiration, low stock, and missing locations. It cannot
   place orders or make commitments without a human.
 - Natural-language warehouse search uses OpenAI Structured Outputs to translate requests
@@ -34,10 +33,8 @@ Required for the persistent application:
 
 - `DATABASE_URL`: pooled Neon Postgres connection string
 - `AUTH_SECRET`: at least 32 characters
-- `OPENAI_API_KEY`: product/category interpretation, warehouse search, and a constrained negotiation explanation
+- `OPENAI_API_KEY`: optional text interpretation, warehouse search, and constrained negotiation explanations
 - `OPENAI_TEXT_MODEL`: text tasks (defaults to `gpt-5-mini`)
-- `ANTHROPIC_API_KEY`: optional two-pass aerial donation counting
-- `ROBOFLOW_API_KEY` and `YOLO_MODEL_ID`: optional hosted YOLO fallback; the bundled ONNX model is used first
 
 ATLAS does not use an LLM to invent quantities or approve transfers. Optional model output
 only explains a proposal; it falls back to deterministic copy if the API is unavailable. Quantities come from
@@ -51,6 +48,8 @@ The database migrations are additive and safe to rerun.
 
 Use `vision_agent/web` as the Root Directory. Configure the environment variables above,
 run `npm run db:migrate` once against production Neon, and deploy the `main` branch.
+`vision_agent/web` is retained only as the existing Vercel root-directory name; the
+application no longer contains a vision agent or computer-vision functionality.
 
 ## Checks
 
