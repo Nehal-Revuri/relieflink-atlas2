@@ -106,7 +106,7 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
         method: "POST",
         body: form,
       });
-      setNotice(`${x.imported} rows added to the shared ledger.`);
+      setNotice(x.message || `${x.imported} rows added to the shared ledger.`);
       await load();
       setView("inventory");
     } catch (e) {
@@ -328,10 +328,10 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
             <div className="intake-tabs">
               <div>
                 <p className="eyebrow">Unified intake</p>
-                <h2>Photo analysis and CSV import</h2>
+                <h2>Inventory intake</h2>
                 <p>
-                  Both methods create reviewable records in the same inventory
-                  spreadsheet.
+                  Photograph, describe, scan, enter, or import donations. Every
+                  method creates an editable draft or ledger record.
                 </p>
               </div>
             </div>
@@ -346,8 +346,9 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
                 <p className="eyebrow">Bulk inventory intake</p>
                 <h2>Import a CSV file</h2>
                 <p className="muted">
-                  Required: product_name, category, quantity, unit. Optional
-                  fields remain editable after import.
+                  Any CSV column layout is accepted. Common headings are mapped
+                  automatically; incomplete rows are still imported and marked
+                  for review in the spreadsheet.
                 </p>
                 <a
                   className="text-button"

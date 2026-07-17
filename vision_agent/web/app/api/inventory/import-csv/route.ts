@@ -29,6 +29,36 @@ const key = (value: string) =>
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, "_");
+const aliases: Record<string, string> = {
+  item: "product_name",
+  item_name: "product_name",
+  name: "product_name",
+  product: "product_name",
+  product_name: "product_name",
+  food: "product_name",
+  food_item: "product_name",
+  type: "category",
+  food_category: "category",
+  group: "category",
+  count: "quantity",
+  qty: "quantity",
+  amount: "quantity",
+  units: "unit",
+  package: "unit",
+  package_type: "unit",
+  expiry: "expiration_date",
+  expiration: "expiration_date",
+  expiration_date: "expiration_date",
+  best_by: "expiration_date",
+  best_by_date: "expiration_date",
+  location: "bin_location",
+  shelf: "bin_location",
+  bin: "bin_location",
+  upc: "barcode",
+  upc_code: "barcode",
+  sku: "barcode",
+};
+const mappedKey = (value: string) => aliases[key(value)] || key(value);
 type Row = Record<string, string | number> & {
   product_name: string;
   category: string;
@@ -54,37 +84,57 @@ export async function POST(request: Request) {
     const lines = (await file.text()).split(/\r?\n/).filter(Boolean);
     if (lines.length < 2)
       throw new Error("CSV needs a header and at least one item");
-    const headers = parseLine(lines[0]).map(key);
-    const legacy = headers.includes("count") && headers.includes("site");
-    if (!legacy)
-      for (const required of ["product_name", "category", "quantity", "unit"])
-        if (!headers.includes(required))
-          throw new Error(`Missing required column: ${required}`);
+    const rawHeaders = parseLine(lines[0]).map(key);
+    const headers = parseLine(lines[0]).map(mappedKey);
+    const legacy = rawHeaders.includes("count") && rawHeaders.includes("site");
+    const warnings: Array<{ row: number; missing: string[] }> = [];
     const records: Row[] = lines.slice(1).map((line, index) => {
       const values = parseLine(line);
       const row = Object.fromEntries(
         headers.map((header, position) => [header, values[position] ?? ""]),
       ) as Record<string, string>;
-      const quantity = Number(legacy ? row.count : row.quantity);
+      const rawQuantity = row.quantity;
+      const parsedQuantity = Number(rawQuantity);
+      const quantity =
+        rawQuantity !== "" &&
+        Number.isFinite(parsedQuantity) &&
+        parsedQuantity >= 0
+          ? parsedQuantity
+          : 0;
       const productName = legacy
         ? row.product_name || row.category.replaceAll("_", " ")
         : row.product_name;
-      const unit = legacy ? row.unit || "items" : row.unit;
-      if (
-        !productName ||
-        !row.category ||
-        !unit ||
-        !Number.isFinite(quantity) ||
-        quantity < 0
-      )
-        throw new Error(`Row ${index + 2} has invalid required values`);
+      const missing = [
+        !productName && "product_name",
+        !row.category && "category",
+        (rawQuantity === "" ||
+          !Number.isFinite(parsedQuantity) ||
+          parsedQuantity < 0) &&
+          "quantity",
+        !row.unit && "unit",
+      ].filter(Boolean) as string[];
+      if (missing.length) warnings.push({ row: index + 2, missing });
+      const existingNotes = row.notes?.trim();
+      const reviewNote = missing.length
+        ? `Needs review: missing or invalid ${missing.join(", ")}.`
+        : "";
       return {
         ...row,
-        product_name: productName,
-        category: row.category,
+        product_name: productName || `Unidentified item (row ${index + 2})`,
+        category: row.category || "Needs review",
         quantity,
-        unit,
+        unit: legacy ? row.unit || "items" : row.unit || "items",
         source_name: legacy ? row.source_name || row.site : row.source_name,
+        expiration_date:
+          row.expiration_date && /^\d{4}-\d{2}-\d{2}$/.test(row.expiration_date)
+            ? row.expiration_date
+            : "",
+        condition: ["good", "damaged", "quarantined", "expired"].includes(
+          row.condition,
+        )
+          ? row.condition
+          : "good",
+        notes: [existingNotes, reviewNote].filter(Boolean).join(" "),
       } as Row;
     });
     const items = await withTransaction(async (client) => {
@@ -138,6 +188,10 @@ export async function POST(request: Request) {
       imported: items.length,
       items,
       format: legacy ? "legacy_site_category_count" : "inventory_template",
+      warnings,
+      message: warnings.length
+        ? `${items.length} rows imported. ${warnings.length} row${warnings.length === 1 ? "" : "s"} need missing information.`
+        : `${items.length} rows imported successfully.`,
     });
   } catch (error) {
     return NextResponse.json(
