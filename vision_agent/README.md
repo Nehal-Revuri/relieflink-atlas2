@@ -12,10 +12,14 @@ visible packages, post category observations, and leave approval to a human revi
 python -m vision_agent.vision_agent --site-id 1 --fake
 python -m vision_agent.vision_agent --site-id 1 --image shelf.jpg
 python -m vision_agent.vision_agent --site-id 1 --camera 0
+python -m vision_agent.vision_agent --site-id 1 --image shelf.jpg --debug
 ```
 
 The fake path is key-free. The image and camera paths use the configured Claude
-vision model and the same ledger contract as the original agent.
+vision model and the same ledger contract as the original agent. Claude counting
+uses two independent calls: a region-by-region free-text recount followed by
+schema extraction. The final confidence is grounded in agreement between the
+passes; use `--debug` to print both counting records for human review.
 
 Shelf counting happens **on the edge**: a YOLOv8n model runs locally on whatever device
 is pointing at the shelf. No frames leave the device, only category counts are posted to

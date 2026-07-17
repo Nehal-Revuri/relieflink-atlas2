@@ -32,20 +32,21 @@ class VisionAgent:
         post_counts(self.site_id, result, source="fake")
         return result
 
-    def run_image(self, image_path: str) -> dict:
+    def run_image(self, image_path: str, debug: bool = False) -> dict:
         """Count one still image with the configured vision model."""
-        result = count_with_claude(image_path)
+        result = count_with_claude(image_path, debug=debug)
         post_counts(self.site_id, result, source="vision")
         return result
 
-    def run_camera(self, camera_index: int) -> dict:
+    def run_camera(self, camera_index: int, debug: bool = False) -> dict:
         """Capture one camera frame, then process it as a still image."""
-        return self.run_image(capture_frame(camera_index))
+        return self.run_image(capture_frame(camera_index), debug=debug)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="ReliefLink replacement vision agent")
     parser.add_argument("--site-id", type=int, required=True, help="food-bank site watched by this agent")
+    parser.add_argument("--debug", action="store_true", help="print both Claude visual counting records")
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument("--fake", action="store_true", help="run without a camera or API key")
     modes.add_argument("--image", help="count one JPEG, PNG, or WebP shelf photo")
@@ -56,9 +57,9 @@ def main() -> None:
     if args.fake:
         agent.run_fake()
     elif args.image:
-        agent.run_image(args.image)
+        agent.run_image(args.image, debug=args.debug)
     elif args.camera is not None:
-        agent.run_camera(args.camera)
+        agent.run_camera(args.camera, debug=args.debug)
     else:  # pragma: no cover - argparse's required group handles this
         sys.exit("Choose --fake, --image PATH, or --camera INDEX")
 
